@@ -1,0 +1,25 @@
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! FATAL ERROR OCCURRED
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Encountered a fatal error in the file
+    ../source/main.cpp
+at line number 158.
+========================================
+
+
+  Error reading FASTA file contents.  In 'read_entire_file_contents()', unable to open (for reading) file "saccharomyces_cerevisiae.gff" at path 
+              "..\data\S_cerevisiae_genome".
+File likely does not exist or is currently open 
+
+========================================
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+Program Duration: 00h:00m:00.192s
+
+User Comment (Press Enter to Exit): NA

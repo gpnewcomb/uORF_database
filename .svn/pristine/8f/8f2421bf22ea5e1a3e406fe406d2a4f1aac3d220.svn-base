@@ -1,0 +1,683 @@
+//==============================================================================
+// Project	   : uORF
+// Name        : uORF__process.cpp
+// Author      : Garin Newcomb
+// Email       : gpnewcomb@live.com    
+// Version     : See "Revision History" below
+// Copyright   : Copyright 2014 University of Nebraska-Lincoln
+// Description : Source code to process and perform operations on uORF's
+//==============================================================================
+//
+//  Revision History
+//      v0.0.0 - 2014/07/16 - Garin Newcomb
+//          Initial creation of file, pulling primarily from the previous "uORF_manip.cpp" used with this program
+//
+//    	Appl Version at Last File Update::  v0.0.x - 2014/07/16 - Garin Newcomb
+//      	[Note:  until program released, all files tracking with program revision level -- see "version.h" file]
+//
+//==============================================================================
+
+
+////////////////////////////////////////////////////////////////////////////////
+//
+//  Table of Contents -- Source (.cpp) File
+//      (Note:  (*) indicates that the section is not present in this file)
+//
+//      A. Include Statements, Preprocessor Directives, and Related
+//      B. Global Variable Declarations (including those in other files)
+//      C. Member Function Definitions
+//      D. Non-Member Function Definitions
+//     *E. UNUSED Non-Member Function Definitions
+//
+////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// A. Include Statements, Preprocessor Directives, and Related
+//
+////////////////////////////////////////////////////////////////////////////////
+
+#include <windows.h>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <algorithm>   	// For find()
+
+using namespace std;
+
+// Project-specific header files:  definitions and related information
+#include "defs__general.h"
+#include "defs__appl_parameters.h"
+
+// Project-specific header files:  support functions and related
+#include "support__file_io.h"
+#include "support__general.h"
+#include "support__bioinformatics.h"
+#include "uORF__compile.h"
+
+// Header file for this file
+#include "uORF__process.h"
+
+//==============================================================================
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// B. Global Variable Declarations (including those in other files)
+//
+////////////////////////////////////////////////////////////////////////////////
+
+extern TErrors Errors;						// Stores information about errors and responds to them in several ways
+
+////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// C. Member Function Definitions
+//
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// D. Non-Member Function Definitions
+//
+////////////////////////////////////////////////////////////////////////////////
+
+//==============================================================================
+
+void sort_and_consolidate( vector < TORF_Data > * const ORF_Data )
+{
+	if( ORF_SORTING_METHOD != DONT_SORT_ORFS )
+	{
+		sort( ORF_Data->begin(), ORF_Data->end(), compare_ORF_positions );
+
+		combine_uORFs_by_gene( ORF_Data );
+
+		for( unsigned int i = 0; i < ORF_Data->size(); i++ )
+		{
+			ORF_Data->at( i ).sort_uORFs();
+		}
+
+		delete_duplicate_uORFs( ORF_Data, SELECT_uORFS_TO_DELETE );
+		
+	
+		vector <TGO_Annotation> All_GO_Annotations;
+		parse_GO_hierarchy( &All_GO_Annotations );
+		add_GO_info_to_ORFs( ORF_Data, All_GO_Annotations );
+
+
+
+		if( ORF_SORTING_METHOD == SORT_ORFS_BY_GO_TERMS )
+		{
+			sort_ORFs_by_GO_terms( GO_NAMESPACE_TO_SORT_BY, ORF_Data, All_GO_Annotations );
+		}
+	}
+	
+	return;
+}
+//==============================================================================
+
+
+
+void sort_ORFs_by_GO_terms( const string & GO_namespace_to_sort, vector < TORF_Data > * const ORF_Data, const vector < TGO_Annotation > & All_GO_Annotations )
+{
+	if( ORF_Data->size() == 0 )
+	{
+		Errors.handle_error( FATAL, (string)"Error in 'sort_ORFs_by_GO_terms()': 'ORF_Data' vector is empty. ", __FILE__, __LINE__ );
+	}
+	
+
+	bool no_ORFs_w_GO_terms_this_level = TRUE;
+
+	vector < vector<TORF_Data>::iterator > segment_begin_it( 1, ORF_Data->begin() );
+	vector < vector<TORF_Data>::iterator > segment_end_it  ( 1, ORF_Data->end  () );
+	
+	unsigned int namespace_max_level = 1;
+	unsigned int namespace_it = 0;
+	
+	if( GO_namespace_to_sort == GO_BIO_PROC_ID  )
+	{
+		namespace_max_level = GO_BIO_PROC_MAX_LEVEL;
+		namespace_it 		= GO_BIO_PROC_IT;
+	}
+	else if( GO_namespace_to_sort == GO_CELL_COMP_ID )
+	{
+		namespace_max_level = GO_CELL_COMP_MAX_LEVEL;
+		namespace_it 		= GO_CELL_COMP_IT;
+	}
+	else if( GO_namespace_to_sort == GO_MOL_FUNC_ID  )
+	{
+		namespace_max_level = GO_MOL_FUNC_MAX_LEVEL;
+		namespace_it 		= GO_MOL_FUNC_IT;
+	}
+	else
+	{
+		Errors.handle_error( FATAL, (string)"Error in 'sort_ORFs_by_GO_terms()': GO namespace " + GO_namespace_to_sort + " not recognized. ", __FILE__, __LINE__ );
+	}
+	
+	
+	
+	for( unsigned int curr_level = 1; curr_level <= namespace_max_level; curr_level++ )
+	{
+		ostringstream output_oss;
+		output_oss << "Sorting by GO '" << GO_namespace_to_sort << "' level " << curr_level << " terms...";
+		output_text_line( output_oss.str() );
+		
+
+		for( unsigned int ORF_it = 0; ORF_it < ORF_Data->size(); ORF_it++ )
+		{
+			if( ORF_Data->at( ORF_it ).most_specific_GO_term[namespace_it].level > curr_level && ORF_Data->at( ORF_it ).most_specific_GO_term[namespace_it].level != DUMMY_GO_LEVEL )
+			{
+				vector <TGO_Term> parents_of_most_specific = get_all_parents_of( ORF_Data->at( ORF_it ).most_specific_GO_term[namespace_it].name, 
+																				 All_GO_Annotations[ namespace_it ] );
+																				 
+				ORF_Data->at( ORF_it ).GO_term_to_sort_curr_level = parents_of_most_specific[ ORF_Data->at( ORF_it ).most_specific_GO_term[namespace_it].level - curr_level - 1 ].name;
+				
+				no_ORFs_w_GO_terms_this_level = FALSE;
+			}
+			else if( ORF_Data->at( ORF_it ).most_specific_GO_term[namespace_it].level == curr_level )
+			{
+				ORF_Data->at( ORF_it ).GO_term_to_sort_curr_level = ORF_Data->at( ORF_it ).most_specific_GO_term[namespace_it].name;
+				no_ORFs_w_GO_terms_this_level = FALSE;
+			}
+			else
+			{
+				ORF_Data->at( ORF_it ).GO_term_to_sort_curr_level = "";
+			}
+			
+
+			// output_oss.str( "" );
+			// output_oss << "term to sort ORF " << ORF_it << " (" << ORF_Data->at( ORF_it ).gene_name << ") by: " << ORF_Data->at( ORF_it ).GO_term_to_sort_curr_level;
+			// output_text_line( output_oss.str() );
+		}
+		
+		
+		if( no_ORFs_w_GO_terms_this_level == FALSE )
+		{
+			unsigned int num_segments_to_sort = 0;
+			
+			if( segment_end_it.size() != segment_begin_it.size() )
+			{ 
+				Errors.handle_error( FATAL, (string)"Error in 'sort_ORFs_by_GO_terms()': Sizes of segment end and segment begin vectors don't match. ", __FILE__, __LINE__ ); 
+			
+			}
+			for( unsigned int i = 0; i < segment_end_it.size(); i++ )
+			{
+				stable_sort( segment_begin_it[i], segment_end_it[i], compare_ORF_GO_terms );
+			}
+		
+		
+			segment_begin_it.clear();
+			segment_end_it.clear();
+
+
+			string prev_GO_term = ORF_Data->at( 0 ).GO_term_to_sort_curr_level;
+			
+			if( prev_GO_term != "" )
+			{
+				segment_begin_it.push_back( ORF_Data->begin() );
+			}
+
+			for( unsigned int curr_it = 1; curr_it < ORF_Data->size(); curr_it++ )
+			{
+				if( prev_GO_term != ORF_Data->at( curr_it ).GO_term_to_sort_curr_level )
+				{
+					if( prev_GO_term != "" )
+					{
+						segment_end_it.push_back  ( ORF_Data->begin() + curr_it );
+						num_segments_to_sort++;
+						
+						// output_oss.str( "" );
+						// output_oss << "Segment to sort " << num_segments_to_sort << ": " << "begin it: "  << (int)( segment_begin_it.back() - ORF_Data->begin() ) << "   end it: " << (int)( segment_end_it.back() - ORF_Data->begin() ) << "   prev go: " << prev_GO_term;
+						// output_text_line( output_oss.str() );
+					}
+					
+					
+					if( ORF_Data->at( curr_it ).GO_term_to_sort_curr_level != "" )
+					{
+						segment_begin_it.push_back( ORF_Data->begin() + curr_it );
+					}
+					
+					prev_GO_term = ORF_Data->at( curr_it ).GO_term_to_sort_curr_level;
+				}
+			}
+			
+			if( ORF_Data->size() > 1 && segment_end_it.size() != segment_begin_it.size() )
+			{
+				num_segments_to_sort++;
+				segment_end_it.push_back( ORF_Data->end() );
+				
+				// output_oss.str( "" );
+				// output_oss << "Segment to sort " << num_segments_to_sort << ": " << "begin it: "  << (int)( segment_begin_it.back() - ORF_Data->begin() ) << "   end it: " << (int)( segment_end_it.back() - ORF_Data->begin() ) << "   prev go: " << prev_GO_term;
+				// output_text_line( output_oss.str() );
+			}
+		}
+	}
+
+	return;
+}
+
+/*
+// Unused Code
+
+	// Failed attempt at generating a GO hierarchy based solely on the GO annotations for the genes included in the uORF list
+	
+	vector <vector <TGO_Annotation> > All_Go_Annotations( NUM_GO_NAMESPACES, vector <TGO_Annotation>( 0, TGO_Annotation( "" ) ) );
+	
+	for( unsigned int i = 0; i < NUM_GO_NAMESPACES; i++ )
+	{
+		TCount_Term_Vect num_times_terms_appear;
+		
+		output_text_line( (string)"Namespace: " + ORF_Data->at( 0 ).GO_Annotations[i].GO_namespace );
+		
+		vector <string> all_terms;
+		
+		for( unsigned int j = 0; j < ORF_Data->size(); j++ )
+		{
+			All_Go_Annotations[i].push_back( TGO_Annotation( ORF_Data->at( j ).GO_Annotations[i].GO_namespace ) );
+			
+			
+			for( unsigned int k = 0; k < ORF_Data->at( j ).GO_Annotations[i].GO_Terms.size(); k++ )
+			{
+				// Check if the term has already been added (there are multiples because the same term can have multiple evidence codes)
+				unsigned int searched_term = 0;
+				
+				while( searched_term < All_Go_Annotations[i][j].GO_Terms.size() &&
+					   All_Go_Annotations[i][j].GO_Terms[searched_term].name != ORF_Data->at( j ).GO_Annotations[i].GO_Terms[k].name )
+				{
+					searched_term++;	
+				}
+
+				if( searched_term == All_Go_Annotations[i][j].GO_Terms.size() )
+				{
+					All_Go_Annotations[i][j].GO_Terms.push_back( ORF_Data->at( j ).GO_Annotations[i].GO_Terms[k] );
+					num_times_terms_appear.modify( ORF_Data->at( j ).GO_Annotations[i].GO_Terms[k].name, INCREMENT );
+				}
+				
+
+				searched_term = 0;
+				
+				while( searched_term <all_terms.size() &&
+					   all_terms[searched_term] != ORF_Data->at( j ).GO_Annotations[i].GO_Terms[k].name )
+				{
+					searched_term++;	
+				}
+
+				if( searched_term == all_terms.size() )
+				{
+					all_terms.push_back( ORF_Data->at( j ).GO_Annotations[i].GO_Terms[k].name );
+				}
+			}		
+		}
+		
+
+		vector <vector <vector <string> > > terms_appear_with( all_terms.size(), vector <vector <string> >( 0 ) );
+		
+		for( unsigned int j = 0; j < All_Go_Annotations[i].size(); j++ )
+		{
+			for( unsigned int k = 0; k < ( All_Go_Annotations[i][j].GO_Terms.size() ); k++ )
+			{
+				unsigned int term_it = find( all_terms.begin(), all_terms.end(), All_Go_Annotations[i][j].GO_Terms[k].name ) - all_terms.begin();
+				terms_appear_with[ term_it ].push_back( vector <string>( 0 ) );
+			}
+			
+			
+			for( unsigned int k = 0; (int)k < (int)( All_Go_Annotations[i][j].GO_Terms.size() - 1 ); k++ )
+			{
+				for( unsigned int l = k + 1; l < All_Go_Annotations[i][j].GO_Terms.size(); l++ )
+				{
+					unsigned int term_it = find( all_terms.begin(), all_terms.end(), All_Go_Annotations[i][j].GO_Terms[k].name ) - all_terms.begin();
+					terms_appear_with[ term_it ].back().push_back( All_Go_Annotations[i][j].GO_Terms[l].name );
+					
+					term_it = find( all_terms.begin(), all_terms.end(), All_Go_Annotations[i][j].GO_Terms[l].name ) - all_terms.begin();
+					terms_appear_with[ term_it ].back().push_back( All_Go_Annotations[i][j].GO_Terms[k].name );
+				}
+			}
+		}
+		
+
+		vector < vector <string> > terms_common_to_all( all_terms.size() );
+		
+		for( unsigned int j = 0; j < terms_appear_with.size(); j++ )
+		{
+			for( unsigned int k = 0; k < all_terms.size(); k++ )
+			{
+				if( perc_lists_containing_element( all_terms[k], terms_appear_with[j] ) >= 90 )
+				{
+					terms_common_to_all[j].push_back( all_terms[k] );
+				}
+			}
+		}
+		
+		
+		TCount_Term_Vect term_num_parents;
+		
+		for( unsigned int j = 0; j < all_terms.size(); j++ )
+		{
+			term_num_parents.add_term( all_terms[j], terms_common_to_all[j].size() );
+		}
+		
+		term_num_parents.sort_terms( BY_COUNT, INCREASING );
+
+		vector <TCount_Term> term_num_parents_vect = term_num_parents.get_term_vect();
+		
+		vector <TCount_Term_Vect> num_times_terms_appear_by_level;
+		vector <unsigned int> levels( 0 );
+		
+		
+		unsigned int curr_it = 0;
+		unsigned int level_num = term_num_parents_vect[curr_it].get_count();
+		
+		while( curr_it < term_num_parents_vect.size() )
+		{
+			level_num = term_num_parents_vect[curr_it].get_count();
+			num_times_terms_appear_by_level.push_back( TCount_Term_Vect() );
+			levels.push_back( level_num );
+			
+			while( curr_it < term_num_parents_vect.size() && level_num == term_num_parents_vect[curr_it].get_count() )
+			{
+				num_times_terms_appear_by_level.back().add_term( term_num_parents_vect[curr_it].get_term(), 
+																 num_times_terms_appear.get_term_count( term_num_parents_vect[curr_it].get_term() ) );
+				curr_it++;
+			}
+		}
+
+		
+		for( unsigned int j = 0; j < num_times_terms_appear_by_level.size(); j++ )
+		{
+			ostringstream output_oss;
+			output_oss << "level: " << levels[j] << "\n";
+			output_text_line( output_oss.str() );
+			
+			output_oss.str( "" );
+			
+			num_times_terms_appear_by_level[j].sort_terms( BY_COUNT, DECREASING );
+						
+			vector <TCount_Term> num_time_term_appears_this_level = num_times_terms_appear_by_level[j].get_term_vect();
+						
+			for( unsigned int k = 0; k < num_time_term_appears_this_level.size(); k++ )
+			{
+				output_oss << "  num appearances: " << num_time_term_appears_this_level[k].get_count() << "	term: " << num_time_term_appears_this_level[k].get_term() << "\n";
+			}
+			
+			output_text_line( output_oss.str() );
+		}
+	}
+	*/
+//==============================================================================
+
+
+
+bool compare_ORF_positions( const TORF_Data & ORF_1, const TORF_Data & ORF_2 )
+{
+	if     ( ORF_1.chrom_num < ORF_2.chrom_num ) { return ORF_1_BEFORE_ORF_2; }
+	else if( ORF_1.chrom_num > ORF_2.chrom_num ) { return ORF_2_BEFORE_ORF_1; }
+	else
+	{
+		if    ( ORF_1.gene_start_pos <  ORF_2.gene_start_pos )   { return ORF_1_BEFORE_ORF_2; }
+		else/*( ORF_1.gene_start_pos >= ORF_2.gene_start_pos )*/ { return ORF_2_BEFORE_ORF_1; }
+	}
+	
+	// Should never get here
+	return ORF_2_BEFORE_ORF_1;
+}
+//==============================================================================
+
+
+
+bool compare_ORF_GO_terms( const TORF_Data & ORF_1, const TORF_Data & ORF_2 )
+{
+	if( ORF_1.GO_term_to_sort_curr_level.compare( ORF_2.GO_term_to_sort_curr_level ) > 0 ) 
+	{ 
+		if	  ( ORF_2.GO_term_to_sort_curr_level == "" )  { return ORF_1_BEFORE_ORF_2; }
+		else/*( ORF_2.GO_term_to_sort_curr_level != "" )*/{ return ORF_2_BEFORE_ORF_1; } 
+	}
+	else if( ORF_1.GO_term_to_sort_curr_level.compare( ORF_2.GO_term_to_sort_curr_level ) < 0 )
+	{
+		if	  ( ORF_1.GO_term_to_sort_curr_level == "" )  { return ORF_2_BEFORE_ORF_1; }
+		else/*( ORF_1.GO_term_to_sort_curr_level != "" )*/{ return ORF_1_BEFORE_ORF_2; } 
+	}
+	else /*if( ORF_1.GO_term_to_sort_curr_level != "" )*/
+	{
+		return compare_ORF_positions( ORF_1, ORF_2 );
+	}
+
+	// If equivalent, indicate 2 is before 1 (to obey the 'std::sort()' weak ordering requirement)
+	return ORF_2_BEFORE_ORF_1;
+}
+//==============================================================================
+
+
+
+void write_uORFs_to_csv( const vector < TORF_Data > & ORF_Data, const vector <Tenum_uORF_CSV_columns> & col_to_write, const bool select_uORFs, const bool & file_naming_method )
+{
+	vector <vector <string> > vector_to_write( 1, vector <string> ( 0, "" ) );
+	
+	vector <Tenum_uORF_CSV_columns> col_to_write_cpy = col_to_write;
+	
+	// Add all the desired column headers
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_CHROM_NUM 		  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_CHROM_NUM_HEADER		  ); }											
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_SYST_NAME 		  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_SYST_NAME_HEADER		  ); }                                    
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_GENE_CONTEXT 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_GENE_CONTEXT_HEADER	  ); }                         
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_TSS_REL_POS 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_TSS_REL_POS_HEADER	  ); }                         
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_GENE_AUGCAI 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_GENE_AUGCAI_HEADER	  ); }                                
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_GENE_CHANGE 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_GENE_CHANGE_HEADER	  ); }                             
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_CDS_RIB_RPKM 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_CDS_RIB_RPKM_HEADER	  ); }                        
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_GO_BIO_PROC 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_GO_BIO_PROC_HEADER	  ); }        
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_GO_CELL_COMP 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_GO_CELL_COMP_HEADER	  ); }      
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_GO_MOL_FUNC 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_GO_MOL_FUNC_HEADER	  ); }       
+	
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_SOURCE		  	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_SOURCE_HEADER			  ); }                                           
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_EVIDENCE_TYPE	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_EVIDENCE_TYPE_HEADER	  ); }                                           
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_uORF_POS		  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_uORF_POS_HEADER		  ); }                        
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_uORF_LEN		  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_uORF_LEN_HEADER		  ); }                        
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_uORF_REL_POS	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_uORF_REL_POS_HEADER	  ); }                       
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_uORF_TO_TSS	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_uORF_TO_TSS_HEADER	  ); }                       
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_AUGCAI	 	  	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_AUGCAI_HEADER			  ); }                                   
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_RIBOSOMES	 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_RIBOSOMES_HEADER		  ); }                              
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_TRANSL_EFFECT 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_TRANSL_EFFECTS_HEADER	  ); }          
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_uORF_CONTEXT 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_uORF_CONTEXT_HEADER	  ); }          
+	
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_PROBLEM 		  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_PROBLEM_HEADER		  ); }                                   
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_uORF_IN_FRAME	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_uORF_IN_FRAME_HEADER	  ); }                  
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_START_CODON 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_START_CODON_HEADER	  ); }                         
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_START_MOVED 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_START_MOVED_HEADER	  ); }                         
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_PAST_GENE 		  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_PAST_GENE_HEADER		  ); }                             
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_LEN_CHANGE	 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_LEN_CHANGE_HEADER		  ); }          
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_TSS_REL	 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_TSS_REL_HEADER		  ); }          
+	
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_EXT_uORF_CONTEXT ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_EXT_uORF_CONTEXT_HEADER ); }                       
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_EXT_GENE_CONTEXT ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_EXT_GENE_CONTEXT_HEADER ); }                        
+	if( find( col_to_write.begin(), col_to_write.end(), uORF_CSV_COL_NUM_uORF		 	  ) != col_to_write.end() ) { vector_to_write[0].push_back( uORF_LIST_uORF_HEADER			  ); }                                        
+	
+
+	// Make sure the list is in ascending order (necessary for 'TORF_Data::form_vector_for_csv_rows()' to work properly)
+	sort( col_to_write_cpy.begin(), col_to_write_cpy.end() );
+	
+
+	for( unsigned int i = 0; i < ORF_Data.size(); i++ )
+	{
+		vector <vector <string> > temp_vect = ORF_Data[i].form_vector_for_csv_rows( col_to_write_cpy, select_uORFs );
+		vector_to_write.insert( vector_to_write.end(), temp_vect.begin(), temp_vect.end() );
+	}
+
+
+	if( write_2d_vector_to_csv( PATH_OUTPUT_FOLDER, get_uORF_list_file_name( file_naming_method, WRITE ), vector_to_write ) )
+	{
+		Errors.handle_error( FATAL, "Error in 'write_uORFs_to_csv()': Failed to write uORF list to CSV file. ", __FILE__, __LINE__ );
+	}
+	
+	
+	return;
+}
+//==============================================================================
+
+
+
+void write_uORFs_to_csv( const vector < TORF_Data > & ORF_Data, const unsigned int col_selection_type, const bool & file_naming_method )
+{
+	vector <Tenum_uORF_CSV_columns> col_to_write( 0, uORF_CSV_COL_NUM_CHROM_NUM );
+
+	if( col_selection_type == ALL_COLUMNS || col_selection_type == ALL_PERTINENT_COLUMNS || col_selection_type == CANONICAL_uORF_COLUMNS )
+	{
+			col_to_write.push_back( uORF_CSV_COL_NUM_CHROM_NUM 		  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_SYST_NAME 		  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_GENE_CONTEXT 	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_TSS_REL_POS 	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_GENE_AUGCAI 	  );
+		                                                              
+		                                                              
+		if( col_selection_type == ALL_COLUMNS )                       
+		{                                                             
+			col_to_write.push_back( uORF_CSV_COL_NUM_GENE_CHANGE 	  ); 
+		}                                                             
+		                                                              
+		                                                              
+			col_to_write.push_back( uORF_CSV_COL_NUM_CDS_RIB_RPKM 	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_GO_BIO_PROC 	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_GO_CELL_COMP 	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_GO_MOL_FUNC 	  );
+																	   
+			col_to_write.push_back( uORF_CSV_COL_NUM_SOURCE		  	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_EVIDENCE_TYPE	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_uORF_POS		  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_uORF_LEN		  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_uORF_REL_POS	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_uORF_TO_TSS	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_AUGCAI	 	  	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_RIBOSOMES	 	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_TRANSL_EFFECT 	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_uORF_CONTEXT 	  );
+			
+                                                            
+		if( col_selection_type != CANONICAL_uORF_COLUMNS )            
+		{                                                             
+			col_to_write.push_back( uORF_CSV_COL_NUM_PROBLEM 		  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_uORF_IN_FRAME	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_START_CODON 	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_START_MOVED 	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_PAST_GENE 		  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_LEN_CHANGE	 	  );
+			col_to_write.push_back( uORF_CSV_COL_NUM_TSS_REL	 	  );
+		}
+		       
+			   
+			col_to_write.push_back( uORF_CSV_COL_NUM_EXT_uORF_CONTEXT );
+			col_to_write.push_back( uORF_CSV_COL_NUM_EXT_GENE_CONTEXT );
+			col_to_write.push_back( uORF_CSV_COL_NUM_uORF		 	  );
+	}
+	else 
+	{
+		Errors.handle_error( FATAL, "Error in 'write_uORFs_to_csv()': Column selection type passed is unrecognized. ", __FILE__, __LINE__ );
+	}
+	
+	
+	write_uORFs_to_csv( ORF_Data, col_to_write, ( col_selection_type == CANONICAL_uORF_COLUMNS ? CANONICAL_uORFS_ONLY : ALL_uORFS ), file_naming_method );
+	
+	return;
+}
+//==============================================================================
+
+
+
+int write_gene_list_to_file( const vector < TORF_Data > & ORF_Data )
+{
+	string file_contents_to_write_str = "";
+	
+	for( unsigned int i = 0; i < ORF_Data.size(); i++ )
+	{
+		file_contents_to_write_str.append( ORF_Data[i].gene_name + (string)"\n" );
+	}
+	
+
+	if( write_file_contents( PATH_OUTPUT_FOLDER, GENE_LIST_FILE_NAME, file_contents_to_write_str, TRUE ) )
+	{
+		return Errors.handle_error( PASS_UP_ONE_LEVEL, (string)"Error in 'write_gene_list_to_file()': " );
+	}
+	
+	output_text_line( (string)"- Successfully wrote gene list to file '" + PATH_OUTPUT_FOLDER + PATH_FOLDER_SEPARATOR + GENE_LIST_FILE_NAME + "'" );
+	
+	return SUCCESSFUL;
+}
+//==============================================================================
+
+
+
+string get_uORF_list_file_name( const bool & file_naming_method, const bool read_or_write )
+{
+	string uORF_list_file_name = "";
+	
+	if( file_naming_method == REQUEST_FILE_NAME )
+	{
+		do
+		{
+			const string FILE_NAME_PROMPT = (string)"Input uORF list file name " + ( read_or_write == READ ? "for reading" : "for writing" ) + " (must have '.csv' extension): ";
+			uORF_list_file_name = prompt_for_input<string>( FILE_NAME_PROMPT, PRINT_PROMPT_TO_LOG );
+			
+		} while( uORF_list_file_name.find( CSV_FILE_EXTENSION ) == string::npos );
+	}
+	else
+	{
+		int sorting_method;
+
+		if( read_or_write == READ )
+		{ 
+			sorting_method = PREV_ORF_SORTING_METHOD;
+		}
+		else/*(  read_or_write == WRITE )*/
+		{
+			if	  ( ORF_SORTING_METHOD == DONT_SORT_ORFS )  { sorting_method = PREV_ORF_SORTING_METHOD; }
+			else/*( ORF_SORTING_METHOD == DONT_SORT_ORFS )*/{ sorting_method = ORF_SORTING_METHOD; 		}
+		}
+		
+		
+		// Add the uORF selection
+		uORF_list_file_name = (string)uORF_LIST_FILE_NAME_PREFIX + ( uORFs_TO_PRINT == CANONICAL_uORFS_ONLY ? "__canonical_only" : "__all" );
+		
+		
+		// Add the sorting method
+		if( sorting_method == SORT_ORFS_BY_GO_TERMS )
+		{
+			uORF_list_file_name += 	"__sorted_by_" + (string)GO_NAMESPACE_TO_SORT_BY;	 		
+		}
+		else if( sorting_method == SORT_ORFS_BY_POSITION )
+		{
+			uORF_list_file_name += 	"__sorted_by_position";	
+		}
+		else if( sorting_method == DONT_SORT_ORFS )
+		{
+			uORF_list_file_name += "__not_sorted";	
+		}
+		else
+		{
+			Errors.handle_error( FATAL, "Error in 'generate_uORF_list_file_name()': ORF sorting method is not recognized. ", __FILE__, __LINE__ );
+		}
+		
+		uORF_list_file_name +=  CSV_FILE_EXTENSION;
+	}
+	
+	
+	return uORF_list_file_name;
+}
+//==============================================================================
+
+////////////////////////////////////////////////////////////////////////////////
+
+
